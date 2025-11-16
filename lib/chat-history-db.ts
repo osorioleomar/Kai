@@ -1,5 +1,5 @@
 import { getFirestoreDB } from './firebase-admin';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp, WriteResult } from 'firebase-admin/firestore';
 
 const prefix = process.env.FIREBASE_COLLECTION_PREFIX || 'my_kb_';
 const collectionName = `${prefix}chat_history`;
@@ -66,7 +66,7 @@ export class ChatHistoryDB {
     const docs = await query.get();
 
     // Batch delete (500 max per batch)
-    const batches: Array<Promise<void>> = [];
+    const batches: Array<Promise<WriteResult[]>> = [];
     let batch = this.db.batch();
     let batchSize = 0;
     let count = 0;
