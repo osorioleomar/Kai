@@ -3,6 +3,7 @@ import { getCurrentUser } from '@/lib/auth';
 import { getAnswerFromJournal } from '@/lib/gemini-rag';
 import { journalDB } from '@/lib/journal-db';
 import { chatHistoryDB } from '@/lib/chat-history-db';
+import { settingsDB } from '@/lib/settings-db';
 
 
 export async function POST(request: NextRequest) {
@@ -32,13 +33,19 @@ export async function POST(request: NextRequest) {
     const entries = await journalDB.getAllEntriesWithKeywords(userId);
     console.log(`[CHAT] 📚 Retrieved ${entries.length} total journal entries from database`);
 
+    // Get custom prompt if available
+    const customPrompt = await settingsDB.getChatPrompt(userId);
+    if (customPrompt) {
+      console.log(`[CHAT] 🎨 Using custom chat prompt`);
+    }
+
     // Get answer using RAG (filtering happens inside getAnswerFromJournal)
     console.log(`[CHAT] 🤖 Starting RAG pipeline (will filter entries by keywords)...`);
     const llmStartTime = Date.now();
     
     let summary: string;
     try {
-      summary = await getAnswerFromJournal(query, entries, historyToSend);
+      summary = await getAnswerFromJournal(query, entries, historyToSend, customPrompt);
       const llmDuration = Date.now() - llmStartTime;
       console.log(`[CHAT] ✅ RAG response received:`, {
         responseLength: summary.length,

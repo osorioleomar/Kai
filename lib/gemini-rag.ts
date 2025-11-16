@@ -102,7 +102,8 @@ KEYWORDS & CONCEPTS:`;
 export async function getAnswerFromJournal(
   query: string,
   entries: JournalEntry[],
-  conversationHistory: Array<{ question: string; answer: string }> = []
+  conversationHistory: Array<{ question: string; answer: string }> = [],
+  customPrompt?: string | null
 ): Promise<string> {
   if (!query.trim()) {
     return "Please ask a question.";
@@ -149,30 +150,132 @@ KEYWORDS & CONCEPTS:`;
     return "I couldn't determine the key topics of your question. Please try rephrasing it.";
   }
 
-  // Step 2: Retrieve relevant entries by matching keywords or concepts
-  const relevantEntries = entriesWithKeywords.filter(entry =>
-    entry.keywords!.some(entryKeyword => queryKeywords.includes(entryKeyword))
-  );
+  // Step 2: Retrieve relevant entries using semantic matching (primary method)
+  // Use keyword matching as a pre-filter to reduce the number of entries we need to check semantically
+  let candidateEntries = entriesWithKeywords;
+  
+  // Pre-filter with keyword matching to reduce semantic search space
+  const keywordMatches = entriesWithKeywords.filter(entry => {
+    const entryKeywords = entry.keywords!;
+    // Check for exact matches
+    const hasExactMatch = entryKeywords.some(entryKeyword => queryKeywords.includes(entryKeyword));
+    // Check for partial matches (query keyword contained in entry keyword or vice versa)
+    const hasPartialMatch = entryKeywords.some(entryKeyword => 
+      queryKeywords.some(queryKeyword => 
+        entryKeyword.includes(queryKeyword) || queryKeyword.includes(entryKeyword)
+      )
+    );
+    return hasExactMatch || hasPartialMatch;
+  });
 
-  console.log(`[RAG] ✅ Filtered entries:`, {
+  console.log(`[RAG] 🔍 Keyword pre-filter results:`, {
     totalWithKeywords: entriesWithKeywords.length,
-    relevantEntries: relevantEntries.length,
+    keywordMatches: keywordMatches.length,
     queryKeywords: queryKeywords,
   });
 
-  if (relevantEntries.length === 0) {
-    return "I couldn't find any entries in your journal that seem related to your question.";
+  // Use keyword matches as candidates if we have some, otherwise check all entries
+  // But limit to 50 entries max for semantic matching to avoid token limits
+  if (keywordMatches.length > 0 && keywordMatches.length <= 50) {
+    candidateEntries = keywordMatches;
+    console.log(`[RAG] 🎯 Using ${candidateEntries.length} keyword-matched entries for semantic validation`);
+  } else {
+    // If too many keyword matches or none, check most recent entries
+    candidateEntries = entriesWithKeywords.slice(0, Math.min(50, entriesWithKeywords.length));
+    console.log(`[RAG] 🔄 Checking ${candidateEntries.length} most recent entries semantically`);
   }
 
-  // Step 3: Generate an answer from the retrieved entries
-  const formattedEntries = relevantEntries
-    .map(entry => `Date: ${entry.date}\nEntry:\n${entry.text}`)
-    .join('\n\n---\n\n');
+  // Always use semantic matching to find truly relevant entries
+  let relevantEntries: JournalEntry[] = [];
+  
+  const semanticMatchingPrompt = `You are a search expert. Given a user's question and a list of journal entries, identify which entries are relevant to answering the question.
+
+QUESTION:
+---
+${query}
+---
+
+JOURNAL ENTRIES:
+${candidateEntries.map((entry, idx) => 
+  `[${idx}] Date: ${entry.date}\nKeywords: ${entry.keywords?.join(', ') || 'none'}\nEntry: ${entry.text.substring(0, 400)}${entry.text.length > 400 ? '...' : ''}`
+).join('\n\n---\n\n')}
+
+Return ONLY a comma-separated list of entry indices (0-based) that are relevant to the question. For example: "0,2,5"
+If multiple entries are relevant, include them all. If none are relevant, return "none".
+
+RELEVANT ENTRY INDICES:`;
+
+  try {
+    console.log(`[RAG] 🤖 Running semantic matching on ${candidateEntries.length} entries...`);
+    const semanticResult = await callGeminiAPI(semanticMatchingPrompt, 0.1);
+    const matchedIndices = semanticResult.trim().toLowerCase();
+    
+    if (matchedIndices !== 'none' && matchedIndices.length > 0) {
+      const indices = matchedIndices
+        .split(',')
+        .map(s => parseInt(s.trim()))
+        .filter(n => !isNaN(n) && n >= 0 && n < candidateEntries.length);
+      
+      if (indices.length > 0) {
+        relevantEntries = indices.map(idx => candidateEntries[idx]);
+        console.log(`[RAG] ✅ Semantic matching found ${relevantEntries.length} relevant entries`);
+      } else {
+        console.log(`[RAG] ⚠️ Semantic matching returned invalid indices`);
+      }
+    } else {
+      console.log(`[RAG] ⚠️ Semantic matching found no relevant entries`);
+    }
+  } catch (error) {
+    console.error("Error in semantic matching:", error);
+    // Fall back to keyword matches if semantic matching fails
+    relevantEntries = keywordMatches.slice(0, 5);
+    console.log(`[RAG] ⚠️ Falling back to ${relevantEntries.length} keyword-matched entries`);
+  }
+
+  console.log(`[RAG] ✅ Final filtered entries:`, {
+    totalWithKeywords: entriesWithKeywords.length,
+    relevantEntries: relevantEntries.length,
+  });
+
+  // Step 3: Generate an answer (even if no entries found, Kai can still provide opinions/ideas)
+  const formattedEntries = relevantEntries.length > 0
+    ? relevantEntries
+        .map(entry => `Date: ${entry.date}\nEntry:\n${entry.text}`)
+        .join('\n\n---\n\n')
+    : 'No specific journal entries were found that directly relate to this question.';
 
   console.log(`[RAG] 📝 Sending ${relevantEntries.length} relevant entries to final prompt (out of ${entries.length} total)`);
 
-  const finalPrompt = `
-My name is Kai. I'm their closest friend who knows everything about them from their journal. I'm warm, casual, and speak naturally - like we're chatting over coffee, not reading from a database.
+  // Prepare conversation history text
+  const conversationHistoryText = conversationHistory.length > 0 
+    ? conversationHistory.map(h => `Q: ${h.question}\nA: ${h.answer}`).join('\n\n')
+    : 'This is a new conversation.';
+
+  // Prepare journal entries text
+  const journalEntriesText = relevantEntries.length > 0 
+    ? `Each entry shows when it was written. Use these dates naturally when relevant.\n${formattedEntries}`
+    : 'No specific journal entries were found that directly relate to this question. You can still answer based on your general knowledge, opinions, or ideas - use any general context you have about the user if helpful.';
+
+  // Use custom prompt if provided, otherwise use default
+  let finalPrompt: string;
+  if (customPrompt) {
+    // Replace placeholders in custom prompt
+    finalPrompt = customPrompt
+      .replace(/\{query\}/g, query)
+      .replace(/\{conversation_history\}/g, conversationHistoryText)
+      .replace(/\{journal_entries\}/g, journalEntriesText);
+  } else {
+    // Default prompt
+    finalPrompt = `
+You are Kai, an AI assistant who is a close friend to the user. The user has written journal entries, and you know everything about them from reading their journal. You are warm, casual, and speak naturally - like you're chatting over coffee, not reading from a database.
+
+**IMPORTANT - Identity:**
+- YOU are "Kai" (the AI assistant)
+- The USER is the person who wrote the journal entries
+- When you say "I", you mean yourself (Kai)
+- When you say "you", you mean the user (the person asking questions)
+- NEVER refer to the user as "Kai" - that's YOUR name, not theirs
+- If the journal mentions someone named "Kai", that's a different person - clarify if needed
 
 **Your Voice:**
 - Talk like a close friend who already knows them well
@@ -186,26 +289,38 @@ My name is Kai. I'm their closest friend who knows everything about them from th
 ${query}
 
 **What We've Talked About Before:**
-${conversationHistory.length > 0 
-  ? conversationHistory.map(h => `Q: ${h.question}\nA: ${h.answer}`).join('\n\n')
-  : 'This is a new conversation.'}
+${conversationHistoryText}
 
 **Things I Know About You (from your journal):**
-Each entry shows when it was written. Use these dates naturally when relevant.
-${formattedEntries}
+${journalEntriesText}
 
 **How I Answer:**
-- Like a friend who already knows the answer, not like I'm looking it up
+
+**For Factual Questions (about things in the journal):**
+- Answer based on what you know from their journal entries
 - Reference things casually: "Oh yeah, you're [name]!" not "Based on your journal, your name is..."
 - When asked about timing, use the dates naturally: "You wrote about that on [date]" or "You mentioned that in your entry from last week"
-- Be warm and personal - use their name naturally if you know it, remember details
-- If I don't know something specific from these entries, I can say so naturally: "Hmm, I don't remember you mentioning that specifically, but..."
-- Keep it flowing like a real conversation between friends
+- If you don't know something specific from these entries, say so naturally: "Hmm, I don't remember you mentioning that specifically, but..."
 
-I'm Kai, your friend who knows you from your journal - warm, casual, and genuine. Just talk naturally!
+**For Opinions, Ideas, or General Questions:**
+- You can provide your own thoughts, opinions, and ideas - you're not limited to just what's in the journal
+- Use the journal entries as context to inform your response when relevant
+- For example, if they ask for advice or ideas, you can:
+  - Draw on what you know about them from their journal to give personalized suggestions
+  - Provide general helpful advice or ideas
+  - Share your own perspective while referencing relevant journal context
+- Be creative and helpful - you're a friend who can think beyond just what they've written
+
+**General Guidelines:**
+- Be warm and personal - use the user's name naturally if you know it from the journal, remember details
+- Keep it flowing like a real conversation between friends
+- When journal entries are relevant to the question, incorporate them naturally into your response
+- When the question is about opinions, ideas, or general topics, feel free to provide thoughtful responses using journal context to personalize when appropriate
+- Remember: YOU are Kai, the AI assistant. The USER is the person who wrote the journal.
 
 ANSWER:
   `;
+  }
 
   try {
     const answer = await callGeminiAPI(finalPrompt, 0.7);

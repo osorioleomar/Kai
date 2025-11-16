@@ -6,12 +6,13 @@ import { getFirebaseAuth } from '@/lib/firebase-client';
 import EntryMode from './EntryMode';
 import JournalMode from './JournalMode';
 import ChatMode from './ChatMode';
+import SettingsMode from './SettingsMode';
 
 interface MainAppProps {
   user: User;
 }
 
-type Mode = 'entry' | 'journal' | 'chat';
+type Mode = 'entry' | 'journal' | 'chat' | 'settings';
 
 export default function MainApp({ user }: MainAppProps) {
   const [currentMode, setCurrentMode] = useState<Mode>('entry');
@@ -86,6 +87,16 @@ export default function MainApp({ user }: MainAppProps) {
                 >
                   Chat
                 </button>
+                <button
+                  onClick={() => setCurrentMode('settings')}
+                  className={`px-2 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-all flex-1 sm:flex-none text-center ${
+                    currentMode === 'settings'
+                      ? 'bg-white text-amber-600 font-semibold shadow-sm'
+                      : 'text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  Settings
+                </button>
               </div>
             </div>
           </div>
@@ -95,6 +106,7 @@ export default function MainApp({ user }: MainAppProps) {
         {currentMode === 'entry' && <EntryMode user={user} />}
         {currentMode === 'journal' && <JournalMode user={user} />}
         {currentMode === 'chat' && <ChatMode user={user} />}
+        {currentMode === 'settings' && <SettingsMode user={user} />}
       </div>
     </div>
   );

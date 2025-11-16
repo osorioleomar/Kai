@@ -96,12 +96,75 @@ Kai/
 
 ### RAG (Retrieval-Augmented Generation) Pipeline
 
-1. **Keyword Generation**: When you add a journal entry, the system automatically extracts semantic keywords and concepts using Google Gemini
-2. **Intelligent Retrieval**: When you ask a question, the system:
-   - Analyzes your query to extract relevant keywords
-   - Filters journal entries by matching keywords
-   - Only sends relevant entries to the AI for context
-3. **Grounded Generation**: The AI generates answers based strictly on your journal entries, ensuring accurate and relevant responses
+Kai uses a sophisticated hybrid retrieval system that combines keyword matching with AI-powered semantic search to find the most relevant journal entries for answering your questions.
+
+#### 1. Keyword Generation (Entry Processing)
+
+When you add a journal entry:
+- The system automatically extracts **semantic keywords and concepts** using Google Gemini
+- Keywords include both specific entities (people, places, activities) and abstract concepts (feelings, themes)
+- Example: An entry about work might generate keywords like `["product manager", "company", "responsibilities", "workload", "role expansion"]`
+- These keywords are stored with each entry for fast pre-filtering
+
+#### 2. Query Processing (When You Ask a Question)
+
+When you ask a question like "what is my current job?":
+
+**Step 1: Query Keyword Extraction**
+- The system uses Gemini to extract keywords and concepts from your question
+- Example: `["job", "current", "employment status", "professional role", "career identification"]`
+
+**Step 2: Hybrid Retrieval System**
+
+The system uses a **two-stage retrieval approach**:
+
+**Stage A: Keyword Pre-Filtering (Fast)**
+- Quickly filters entries using keyword matching (exact + partial matches)
+- Example: "job" might match entries with keywords like "product manager job" or "current job"
+- This reduces the search space from potentially hundreds of entries to a manageable set (≤50 entries)
+
+**Stage B: Semantic Matching (AI-Powered)**
+- **Always runs** to validate and find truly relevant entries
+- Uses Gemini AI to semantically understand which entries are relevant to your question
+- Considers both:
+  - **Entry content** (first 400 characters of the text)
+  - **Keywords** (previously extracted)
+  - **Date** (for temporal context)
+- Gemini analyzes the semantic meaning, not just keyword overlap
+- Example: Even if keywords don't match exactly, Gemini understands that "what is my current job?" is semantically related to an entry saying "My current position in the company is Product Manager"
+
+**Why This Hybrid Approach?**
+- **Performance**: Keyword pre-filtering reduces the number of entries sent to the AI (saves tokens and time)
+- **Accuracy**: Semantic matching ensures relevant entries are found even when keywords don't align perfectly
+- **Reliability**: Always uses semantic validation, so you get accurate results even if keyword matching finds irrelevant entries
+
+#### 3. Answer Generation
+
+Once relevant entries are retrieved:
+- The system sends only the relevant entries (along with conversation history) to Gemini
+- Gemini generates a natural, conversational answer as "Kai" - your AI friend who knows you from your journal
+- Answers are grounded strictly in your journal entries (no hallucinations)
+- The AI speaks naturally, like a close friend recalling shared experiences
+
+#### Example Flow
+
+```
+User asks: "what is my current job?"
+
+1. Query keywords extracted: ["job", "current", "employment status", ...]
+2. Keyword pre-filter finds 3 candidate entries
+3. Semantic matching validates all 3, finds 1 truly relevant entry:
+   - Entry: "My current position in the company is Product Manager"
+4. Gemini generates answer: "Oh, you're a Product Manager! You mentioned that in your entry from November 16th..."
+```
+
+### Key Features
+
+- **Semantic Understanding**: Finds relevant entries even when keywords don't match exactly
+- **Always Validated**: Semantic matching always runs to ensure accuracy
+- **Efficient**: Keyword pre-filtering keeps token usage reasonable
+- **Contextual**: Considers both content and keywords for better relevance
+- **Natural Conversations**: AI speaks like a friend, not a database
 
 ## API Endpoints
 

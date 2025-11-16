@@ -4,6 +4,12 @@ import { useState, useEffect, useRef } from 'react';
 import { User } from 'firebase/auth';
 import { marked } from 'marked';
 
+// Configure marked for better markdown rendering
+marked.setOptions({
+  breaks: true, // Convert line breaks to <br>
+  gfm: true, // GitHub Flavored Markdown (tables, strikethrough, etc.)
+});
+
 interface ChatMessage {
   question: string;
   answer: string;
@@ -224,7 +230,10 @@ export default function ChatMode({ user }: ChatModeProps) {
                       {msg.answer.startsWith('Error:') ? (
                         <div className="text-red-800">{msg.answer}</div>
                       ) : (
-                        <div className="markdown-content" dangerouslySetInnerHTML={{ __html: marked.parse(msg.answer) }} />
+                        <div 
+                          className="markdown-content"
+                          dangerouslySetInnerHTML={{ __html: marked.parse(msg.answer) }} 
+                        />
                       )}
                     </div>
                   </div>
