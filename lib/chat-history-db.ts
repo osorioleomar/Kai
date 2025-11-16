@@ -35,16 +35,25 @@ export class ChatHistoryDB {
     return docRef.id;
   }
 
-  async getRecentMessages(userId: string, limit: number = 20): Promise<Array<{
+  async getRecentMessages(userId: string, limit: number = 20, beforeTimestamp?: Timestamp): Promise<Array<{
     question: string;
     answer: string;
     timestamp: string;
     sources: string;
+    created_at?: Timestamp;
   }>> {
-    const query = this.collection
+    let query = this.collection
       .where('user_id', '==', userId)
-      .orderBy('created_at', 'desc')
-      .limit(limit);
+      .orderBy('created_at', 'desc');
+
+    // If beforeTimestamp is provided, get messages before that timestamp
+    // Note: Firestore may require a composite index on (user_id, created_at)
+    // If you get an error, create the index as suggested in the error message
+    if (beforeTimestamp) {
+      query = query.where('created_at', '<', beforeTimestamp);
+    }
+
+    query = query.limit(limit);
 
     const docs = await query.get();
     const messages = docs.docs.map((doc) => {
@@ -54,6 +63,7 @@ export class ChatHistoryDB {
         answer: data.answer || '',
         timestamp: data.timestamp || '',
         sources: data.sources || '[]',
+        created_at: data.created_at as Timestamp,
       };
     });
 

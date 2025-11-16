@@ -14,6 +14,7 @@ interface ChatMessage {
   question: string;
   answer: string;
   timestamp: string;
+  created_at?: string; // ISO string for pagination
 }
 
 interface ChatModeProps {
@@ -27,7 +28,11 @@ export default function ChatMode({ user }: ChatModeProps) {
   const [processing, setProcessing] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const conversationHistory = useRef<ChatMessage[]>([]);
 
   useEffect(() => {
@@ -35,17 +40,37 @@ export default function ChatMode({ user }: ChatModeProps) {
   }, [user]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    // Only auto-scroll on initial load or when new messages are added (not when loading older messages)
+    if (initialLoad || !loadingMore) {
+      scrollToBottom();
+    }
+  }, [messages, initialLoad, loadingMore]);
+
+  // Scroll detection for loading more messages
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      // Load more when scrolled near the top (within 200px)
+      if (container.scrollTop < 200 && hasMore && !loadingMore && !initialLoad) {
+        loadMoreMessages();
+      }
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [hasMore, loadingMore, initialLoad, messages.length]);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: initialLoad ? 'auto' : 'smooth' });
   };
 
   const loadConversationHistory = async () => {
     try {
+      setInitialLoad(true);
       const token = await user.getIdToken();
-      const response = await fetch('/api/chat/history?limit=20', {
+      const response = await fetch('/api/chat/history?limit=10', {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -56,9 +81,61 @@ export default function ChatMode({ user }: ChatModeProps) {
         const history = data.messages || [];
         conversationHistory.current = history;
         setMessages(history);
+        setHasMore(data.hasMore || false);
       }
     } catch (error) {
       console.error('Failed to load conversation history:', error);
+    } finally {
+      setInitialLoad(false);
+    }
+  };
+
+  const loadMoreMessages = async () => {
+    if (loadingMore || !hasMore || messages.length === 0) return;
+
+    try {
+      setLoadingMore(true);
+      const token = await user.getIdToken();
+      
+      // Get the timestamp of the oldest message (first in array)
+      const oldestMessage = messages[0];
+      const beforeTimestamp = oldestMessage.created_at || oldestMessage.timestamp;
+
+      // Save current scroll position
+      const container = messagesContainerRef.current;
+      const scrollHeight = container?.scrollHeight || 0;
+
+      const response = await fetch(`/api/chat/history?limit=10&before=${encodeURIComponent(beforeTimestamp)}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const olderMessages = data.messages || [];
+        
+        if (olderMessages.length > 0) {
+          // Prepend older messages to the beginning
+          setMessages((prev) => [...olderMessages, ...prev]);
+          setHasMore(data.hasMore || false);
+          
+          // Restore scroll position after a brief delay to allow DOM update
+          setTimeout(() => {
+            if (container) {
+              const newScrollHeight = container.scrollHeight;
+              const scrollDiff = newScrollHeight - scrollHeight;
+              container.scrollTop = scrollDiff;
+            }
+          }, 50);
+        } else {
+          setHasMore(false);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load more messages:', error);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -112,8 +189,11 @@ export default function ChatMode({ user }: ChatModeProps) {
         timestamp: new Date().toISOString(),
       };
 
-      // Update conversation history
+      // Update conversation history (keep last 50 for context)
       conversationHistory.current.push(assistantMessage);
+      if (conversationHistory.current.length > 50) {
+        conversationHistory.current = conversationHistory.current.slice(-50);
+      }
 
       // Update messages
       setMessages((prev) => {
@@ -196,7 +276,10 @@ export default function ChatMode({ user }: ChatModeProps) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Chat Messages Area */}
-      <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 bg-gray-50 pb-24 sm:pb-28">
+      <div 
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 bg-gray-50 pb-24 sm:pb-28"
+      >
         {messages.length === 0 ? (
           <div className="text-center text-gray-500 mt-10 sm:mt-20">
             <svg className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -209,6 +292,14 @@ export default function ChatMode({ user }: ChatModeProps) {
           </div>
         ) : (
           <div className="space-y-3 sm:space-y-4 px-2 sm:px-0 max-w-4xl mx-auto">
+            {loadingMore && (
+              <div className="flex justify-center py-4">
+                <div className="flex items-center gap-2 text-gray-500 text-sm">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-600"></div>
+                  <span>Loading older messages...</span>
+                </div>
+              </div>
+            )}
             {messages.map((msg, index) => (
               <div key={index} className="space-y-2">
                 {/* User Message */}
