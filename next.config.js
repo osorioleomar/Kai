@@ -1,0 +1,10 @@
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+  // Note: Do NOT expose API keys here - they are only accessible server-side
+  // GOOGLE_AI_API_KEY and GROQ_API_KEY should only be used in API routes (server-side)
+  // NEXT_PUBLIC_* variables are automatically exposed to the client
+}
+
+module.exports = nextConfig
+
